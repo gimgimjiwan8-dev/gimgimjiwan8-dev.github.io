@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Ball: HΛPPY Edition v15</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <script type="module">
+        // =================================================================================
+        // [중요] 외부에서 실행하려면 아래 firebaseConfig에 본인의 Firebase 설정을 채워넣으세요.
+        // 현재는 Canvas 환경 변수(__firebase_config)를 사용하도록 설정되어 있습니다.
+        // =================================================================================
+        let firebaseConfig = {};
+        let appId = 'default-app-id';
+
+        // Canvas 환경 변수가 있으면 사용, 없으면 빈 객체 (외부 실행 시 직접 채워야 함)
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        } else {
+            // 예시: 본인의 Firebase 프로젝트 설정으로 교체 필요
+            // firebaseConfig = {
+            //     apiKey: "YOUR_API_KEY",
+            //     authDomain: "YOUR_PROJECT.firebaseapp.com",
+            //     projectId: "YOUR_PROJECT_ID",
+            //     storageBucket: "YOUR_PROJECT.appspot.com",
+            //     messagingSenderId: "...",
+            //     appId: "..."
+            // };
+        }
+
+        // Firebase 로드 및 상태 관리
+        window.isGameOnline = false;
+
+        try {
+            import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+            import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+            import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+            
+            // 전역 모듈로 노출
+            window.firebaseModules = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, collection, addDoc, getDocs, query, orderBy, limit };
+            
+            // 설정이 유효하면 초기화 시도
+            if (firebaseConfig.apiKey) {
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                
+                // 전역 변수에 DB 저장
+                window.db = db;
+                window.auth = auth;
+
+                signInAnonymously(auth).then(() => {
+                    console.log("Online Connected");
+                    window.isGameOnline = true;
+                }).catch(e => {
+                    console.warn("Auth Failed:", e);
+                    window.isGameOnline = false;
+                });
+
+                onAuthStateChanged(auth, (user) => { 
+                    if (user) window.currentUser = user; 
+                });
+            } else {
+                console.warn("No Firebase Config Found");
+                window.isGameOnline = false;
+            }
+
+        } catch (e) {
+            console.warn("Firebase Module Load Failed", e);
+            window.firebaseModules = null;
+            window.isGameOnline = false;
+        }
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #080808;
+            font-family: 'Orbitron', 'Noto Sans KR', sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(30, 30, 35, 0.3);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 30px;
+            text-align: center;
+            border-radius: 15px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            color: white;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            min-width: 320px;
+            flex-direction: column;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #rankModal { width: 450px; height: 600px; }
+        #rankList {
+            flex: 1;
+            overflow-y: auto;
+            margin: 20px 0;
+            text-align: left;
+            padding-right: 10px;
+        }
+        #rankList::-webkit-scrollbar { width: 6px; }
+        #rankList::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        #rankList::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
+        
+        .rank-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 5px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            font-size: 18px;
+            color: #ddd;
+            text-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .rank-item:first-child { color: #88ccff; font-weight: 900; font-size: 22px; text-shadow: 0 0 10px rgba(136, 204, 255, 0.4); }
+
+        #nameInput {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #666;
+            color: white;
+            padding: 15px;
+            font-family: 'Orbitron', 'Noto Sans KR', sans-serif;
+            font-size: 22px;
+            margin-top: 20px;
+            outline: none;
+            text-align: center;
+            width: 85%;
+            border-radius: 8px;
+            text-transform: uppercase;
+        }
+        #nameInput:focus { border-color: #88ccff; box-shadow: 0 0 10px rgba(136, 204, 255, 0.2); }
+
+        .modal-btn {
+            display: block;
+            margin: 25px auto 0;
+            padding: 14px 50px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid #777;
+            color: white;
+            font-family: 'Orbitron', sans-serif;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.3s;
+            border-radius: 6px;
+        }
+        .modal-btn:hover { background: rgba(255,255,255,0.25); border-color: #fff; transform: translateY(-2px); }
+        .modal-btn:disabled { background: #222; color: #666; border-color: #444; cursor: not-allowed; transform: none; }
+
+        h2 { margin: 0 0 5px 0; font-weight: 900; letter-spacing: 3px; font-size: 28px; text-shadow: 0 0 15px rgba(255,255,255,0.2); }
+        p { color: #ccc; margin: 0; font-size: 14px; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="nameInputModal" class="modal-overlay">
+    <h2>NEW RECORD</h2>
+    <p>ENTER YOUR NAME</p>
+    <input type="text" id="nameInput" maxlength="8" placeholder="PLAYER" autocomplete="off">
+    <button id="submitBtn" class="modal-btn">SUBMIT</button>
+</div>
+
+<div id="rankModal" class="modal-overlay">
+    <h2>LEADERBOARD</h2>
+    <div id="rankList">
+        <div style="text-align:center; margin-top: 80px; color:#aaa;">LOADING...</div>
+    </div>
+    <button id="closeRankBtn" class="modal-btn">CLOSE</button>
+</div>
+
+<script>
+    // --- Firebase Logic (Online Only) ---
+    // 주의: window.firebaseModules는 모듈 스크립트에서 로드됨
+
+    // 저장 함수 (오직 온라인일 때만)
+    window.saveScore = async (name, score) => {
+        if (!window.isGameOnline || !window.db || !window.currentUser) {
+            console.warn("Offline: Cannot save score.");
+            return;
+        }
+        
+        const { collection, addDoc } = window.firebaseModules;
+        // 외부 실행 시 appId 설정 필요 (없으면 'default-app-id' 사용)
+        const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        try {
+            const colRef = collection(window.db, 'artifacts', currentAppId, 'public', 'data', 'scores');
+            await addDoc(colRef, { name, score, timestamp: Date.now(), uid: window.currentUser.uid });
+            console.log("Score Saved to Firebase");
+        } catch (e) {
+            console.error("Save Error:", e);
+        }
+    };
+
+    // 랭킹 불러오기 (오직 온라인일 때만)
+    window.fetchLeaderboardToDOM = async () => {
+        const listEl = document.getElementById('rankList');
+        
+        if (!window.isGameOnline || !window.db) {
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:#f55;">OFFLINE MODE<br><span style="font-size:14px; color:#888;">Cannot connect to server</span></div>';
+            return;
+        }
+
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:#aaa;">LOADING...</div>';
+        
+        const { collection, getDocs } = window.firebaseModules;
+        const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        try {
+            const colRef = collection(window.db, 'artifacts', currentAppId, 'public', 'data', 'scores');
+            const snapshot = await getDocs(colRef);
+            let scores = [];
+            snapshot.forEach(doc => scores.push(doc.data()));
+            
+            // 점수 내림차순 정렬
+            scores.sort((a, b) => b.score - a.score);
+            scores = scores.slice(0, 50); // 상위 50개
+
+            if (scores.length === 0) {
+                listEl.innerHTML = '<div style="text-align:center; padding:20px; color:#888;">No records yet.</div>';
+                return;
+            }
+
+            let html = '';
+            scores.forEach((item, index) => {
+                html += `
+                    <div class="rank-item">
+                        <span>${index + 1}. ${item.name || 'ANON'}</span>
+                        <span>${item.score}</span>
+                    </div>
+                `;
+            });
+            listEl.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:#f55;">Error loading ranks</div>';
+        }
+    };
+</script>
+
+<script>
+// ==========================================
+// 1. 초기화 및 상수
+// ==========================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let WIDTH = window.innerWidth;
+let HEIGHT = window.innerHeight;
+canvas.width = WIDTH; canvas.height = HEIGHT;
+
+const COLOR_BG_DARK = '#0a0a0a'; 
+const COLOR_GRID    = '#181818'; 
+const COLOR_PLAYER  = '#88ccff'; 
+const COLOR_ENEMY   = '#ff8888'; 
+const COLOR_TEXT    = '#eeeeee';
+const COLOR_TEXT_DIM= '#888888';
+const COLOR_DASH_ON = '#ffffff'; 
+const COLOR_DASH_OFF= '#444444'; 
+
+const STATE_INTRO = -1;
+const STATE_MENU = 0;
+const STATE_PLAY = 1;
+const STATE_EXPLODING = 2;    
+const STATE_GAMEOVER = 3;     
+const STATE_SLIDE_TO_MENU = 4;
+const STATE_SLIDE_TO_PLAY = 5;
+const STATE_GUIDE = 7;
+const STATE_MODE_SELECT = 8;
+const STATE_SLIDE_TO_GUIDE = 9;
+const STATE_SLIDE_FROM_GUIDE = 10;
+const STATE_SLIDE_TO_MODE = 11;
+const STATE_SLIDE_FROM_MODE = 12;
+
+const BUTTON_WIDTH = 260;
+const BUTTON_HEIGHT = 65;
+const BUTTON_GAP = 15;
+const BUTTON_MARGIN = 100;
+
+// ==========================================
+// 2. 전역 변수
+// ==========================================
+
+let game_state = STATE_INTRO;
+
+let player_radius = 20;
+let player_speed = 7;
+let player_x = WIDTH / 2;
+let player_y = HEIGHT / 2;
+let global_time = 0; 
+let bg_scroll_x = 0;
+let bg_scroll_y = 0;
+
+let score = 0;
+let score_timer = 0;
+let best_score = 0;
+let lives = 3;
+let difficulty = 1.0;
+const difficulty_growth = 0.00015;
+const spawn_base_interval = 900;
+const min_spawn_interval = 120;
+
+let enemies = [];
+let spawn_timer = 0;
+
+let dash_cooldown = 0;
+const DASH_COOLDOWN_TIME = 800;
+const DASH_DISTANCE = 300;
+
+let particles = [];
+const PARTICLE_DURATION = 600;
+
+let flash_timer = 0;
+const FLASH_MAX_TIME = 400;
+const FLASH_MAX_ALPHA = 0.25;
+
+let shake_timer = 0;
+const SHAKE_MAX_TIME = 250;
+const SHAKE_MAX_INTENSITY = 8;
+let screen_offset = [0, 0];
+
+let slowdown_timer = 0;
+const SLOWDOWN_TIME = 400;
+const ENEMY_SLOW_FACTOR = 0.1;
+let current_time_scale = 1.0; 
+
+const SLIDE_DURATION = 500;
+let slide_timer = 0;
+
+// 가이드 변수
+let guide_phase = 0; 
+let guide_timer = 0;
+let guide_text = "";
+let guide_text_alpha = 0.0;
+let guide_slow_factor = 1.0;
+let guide_overlay_alpha = 0.0;
+let guide_enemy_spawned = false;
+
+let mode_alpha = 0.0; 
+
+const keys = {};
+const mousePos = { x: 0, y: 0 };
+let isMouseDown = false;
+let mouseClicked = false;
+
+const nameModal = document.getElementById('nameInputModal');
+const rankModal = document.getElementById('rankModal');
+const nameInput = document.getElementById('nameInput');
+const submitBtn = document.getElementById('submitBtn');
+const closeRankBtn = document.getElementById('closeRankBtn');
+let isScoreSaved = false;
+
+// ==========================================
+// 3. 유틸리티 & 로직
+// ==========================================
+
+function randomRange(min, max) { return Math.random() * (max - min) + min; }
+function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function ease_in_out_cubic(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+
+function reset_game() {
+    score = 0; score_timer = 0; lives = 3; difficulty = 1.0;
+    enemies = []; spawn_timer = 0; flash_timer = 0; shake_timer = 0; slowdown_timer = 0;
+    particles = []; dash_cooldown = 0;
+    player_x = WIDTH / 2; player_y = HEIGHT / 2;
+    current_time_scale = 1.0;
+    isScoreSaved = false;
+    nameModal.classList.remove('active');
+    rankModal.classList.remove('active');
+    submitBtn.disabled = false; submitBtn.textContent = "SUBMIT"; submitBtn.style.backgroundColor = ""; 
+}
+
+function reset_guide() {
+    guide_phase = 0; guide_timer = 0; guide_overlay_alpha = 0.0; guide_text_alpha = 0.0;
+    player_x = WIDTH / 2; player_y = HEIGHT / 2;
+    dash_cooldown = 0; enemies = []; particles = [];
+    guide_enemy_spawned = false;
+}
+
+function create_enemy(px, py, difficulty) {
+    const sides = ["left", "right", "top", "bottom"];
+    const side = sides[Math.floor(Math.random() * sides.length)];
+    let x, y;
+    if (side === "left") { x = -50; y = randomInt(0, HEIGHT); }
+    else if (side === "right") { x = WIDTH + 50; y = randomInt(0, HEIGHT); }
+    else if (side === "top") { x = randomInt(0, WIDTH); y = -50; }
+    else { x = randomInt(0, WIDTH); y = HEIGHT + 50; }
+
+    const base_speed = randomRange(2, 4);
+    const speed = base_speed * difficulty;
+    const radius = Math.floor(randomRange(10, 35) * (0.9 + difficulty * 0.1));
+    const dx = px - x; const dy = py - y;
+    const dist = Math.hypot(dx, dy);
+    return { x, y, r: radius, vx: (dx/dist)*speed, vy: (dy/dist)*speed };
+}
+
+function create_dash_effects(x1, y1, x2, y2) {
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    if (dist <= 0) return;
+    const dx = (x2 - x1) / dist; const dy = (y2 - y1) / dist;
+    
+    const count = 20; 
+    for (let i = 0; i < count; i++) {
+        const ratio = Math.random(); 
+        const spreadFactor = (1.0 - ratio) * 20; 
+        const spread = randomRange(-spreadFactor, spreadFactor);
+        
+        const px = x1 + (x2 - x1) * ratio + dy * spread;
+        const py = y1 + (y2 - y1) * ratio - dx * spread;
+        
+        particles.push({
+            type: "speed_line", 
+            x: px, y: py,
+            vx: dx * randomRange(1, 3), vy: dy * randomRange(1, 3),
+            dx: dx, dy: dy, 
+            length: randomRange(10, 80), 
+            width: randomRange(1, 4), 
+            life: 300, max_life: 300, 
+            color: 'rgba(255, 255, 255, 0.6)', 
+            start_alpha: 0.8
+        });
+    }
+}
+
+function create_hit_particles(x, y) {
+    for (let i = 0; i < 15; i++) {
+        const angle = randomRange(0, Math.PI * 2);
+        const speed = randomRange(2, 8);
+        particles.push({
+            type: "circle", x: x, y: y,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            size: randomRange(2, 4), life: PARTICLE_DURATION, max_life: PARTICLE_DURATION,
+            color: '#aaaaaa', start_alpha: 1.0
+        });
+    }
+}
+
+function create_gameover_particles(x, y) {
+    for (let i = 0; i < 120; i++) {
+        const angle = randomRange(0, Math.PI * 2);
+        const speed = randomRange(2, 20); 
+        const shade = Math.floor(randomRange(220, 255)); 
+        particles.push({
+            type: "circle", x: x, y: y,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            size: randomRange(3, 8), life: PARTICLE_DURATION * 3, max_life: PARTICLE_DURATION * 3,
+            color: `rgb(${shade}, ${shade}, ${shade})`, start_alpha: 1.0
+        });
+    }
+}
+
+function trigger_hit_effect() {
+    flash_timer = FLASH_MAX_TIME; shake_timer = SHAKE_MAX_TIME; slowdown_timer = SLOWDOWN_TIME;
+}
+
+// ==========================================
+// 4. 그리기
+// ==========================================
+
+function draw_grid(offset_x, offset_y) {
+    const gridSize = 80; 
+    
+    // 로직은 루프에서 처리 (렌더링만 담당)
+    const totalOffsetX = offset_x + bg_scroll_x;
+    const totalOffsetY = offset_y + bg_scroll_y;
+
+    ctx.beginPath();
+    ctx.strokeStyle = COLOR_GRID;
+    ctx.lineWidth = 1;
+
+    const startX = (totalOffsetX % gridSize) - gridSize;
+    const startY = (totalOffsetY % gridSize) - gridSize;
+
+    for (let x = startX; x < WIDTH + gridSize; x += gridSize) { ctx.moveTo(x, 0); ctx.lineTo(x, HEIGHT); }
+    for (let y = startY; y < HEIGHT + gridSize; y += gridSize) { ctx.moveTo(0, y); ctx.lineTo(WIDTH, y); }
+    ctx.stroke();
+
+    const gradient = ctx.createRadialGradient(WIDTH/2, HEIGHT/2, HEIGHT/2, WIDTH/2, HEIGHT/2, HEIGHT);
+    gradient.addColorStop(0, 'transparent');
+    gradient.addColorStop(1, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0,0, WIDTH, HEIGHT);
+}
+
+function draw_glow_circle(x, y, radius, color, blurAmount) {
+    ctx.shadowBlur = blurAmount; ctx.shadowColor = color; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; 
+}
+
+function draw_speed_line(p, alpha) {
+    ctx.lineWidth = p.width; ctx.strokeStyle = p.color; ctx.globalAlpha = alpha;
+    const half = p.length / 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x - p.dx * half, p.y - p.dy * half);
+    ctx.lineTo(p.x + p.dx * half, p.y + p.dy * half);
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+}
+
+function draw_annotation(targetX, targetY, text, align="left", alpha=1.0) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.fillStyle = "#fff";
+    ctx.font = "bold 20px 'Orbitron'"; 
+    ctx.beginPath(); ctx.arc(targetX, targetY, 4, 0, Math.PI*2); ctx.fill();
+
+    const kneeX = align === "left" ? targetX + 30 : targetX - 30;
+    const kneeY = targetY - 30;
+    const endX  = align === "left" ? kneeX + 120 : kneeX - 120;
+
+    ctx.beginPath(); ctx.moveTo(targetX, targetY); ctx.lineTo(kneeX, kneeY); ctx.lineTo(endX, kneeY); ctx.stroke();
+    ctx.textAlign = align === "left" ? "left" : "right";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(text, endX, kneeY - 5);
+    ctx.restore();
+}
+
+function draw_status_indicator() {
+    ctx.save();
+    ctx.font = "bold 14px 'Orbitron'";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    
+    // 상태에 따른 텍스트와 색상
+    const text = window.isGameOnline ? "ONLINE" : "OFFLINE";
+    // Online: Neon Green, Offline: Red
+    const color = window.isGameOnline ? "rgba(0, 255, 128, 0.4)" : "rgba(255, 50, 50, 0.4)";
+    
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = color;
+    ctx.fillText(text, WIDTH - 20, HEIGHT - 20);
+    
+    const textWidth = ctx.measureText(text).width;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(WIDTH - 20 - textWidth - 8, HEIGHT - 25, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function draw_game_world(offset_x, offset_y) {
+    draw_grid(offset_x * 0.3, offset_y * 0.3); 
+    ctx.save(); ctx.translate(offset_x, offset_y);
+    
+    ctx.globalCompositeOperation = 'lighter';
+    particles.forEach(p => {
+        const life_ratio = p.life / p.max_life;
+        const alpha = p.start_alpha * life_ratio;
+        if (p.type === "circle") {
+            ctx.globalAlpha = alpha; ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.size * life_ratio, 0, Math.PI * 2); ctx.fill();
+        } else if (p.type === "speed_line") {
+            draw_speed_line(p, alpha);
+        }
+    });
+    ctx.globalCompositeOperation = 'source-over';
+    
+    enemies.forEach(enemy => { draw_glow_circle(enemy.x, enemy.y, enemy.r, COLOR_ENEMY, 15); });
+
+    const isPlayerAlive = (game_state === STATE_PLAY || game_state === STATE_SLIDE_TO_PLAY || game_state === STATE_GUIDE);
+    if (isPlayerAlive) {
+        const breathe = Math.sin(global_time * 0.03) * 1.5; 
+        draw_glow_circle(player_x, player_y, player_radius + breathe, COLOR_PLAYER, 20);
+    }
+    ctx.restore();
+
+    if (game_state === STATE_PLAY) draw_hud();
+    if (flash_timer > 0) {
+        const time_ratio = flash_timer / FLASH_MAX_TIME;
+        ctx.fillStyle = `rgba(200, 200, 200, ${FLASH_MAX_ALPHA * time_ratio})`; 
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    }
+}
+
+function draw_guide_overlay() {
+    if (guide_overlay_alpha > 0) {
+        ctx.fillStyle = `rgba(30, 30, 35, ${guide_overlay_alpha * 0.3})`;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        if (guide_text && guide_text_alpha > 0) {
+            draw_annotation(player_x, player_y, guide_text, "left", guide_text_alpha);
+        }
+    }
+}
+
+function draw_hud() {
+    ctx.font = "700 24px 'Orbitron'";
+    ctx.textAlign = "left";
+    
+    ctx.fillStyle = COLOR_TEXT; 
+    ctx.fillText(`SCORE ${score}`, 30, 50);
+    
+    ctx.fillStyle = COLOR_TEXT_DIM; 
+    ctx.fillText(`LIFE ${lives}`, 30, 85);
+
+    const dashReady = dash_cooldown <= 0;
+    const dashText = dashReady ? "DASH OK" : `WAIT ${(dash_cooldown/1000).toFixed(1)}`;
+    ctx.fillStyle = dashReady ? COLOR_DASH_ON : COLOR_DASH_OFF;
+    if(dashReady) { ctx.shadowBlur = 10; ctx.shadowColor = COLOR_DASH_ON; }
+    ctx.fillText(dashText, 30, 120);
+    ctx.shadowBlur = 0;
+}
+
+function draw_button(rect, text, isHover, isDisabled = false) {
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4); 
+    if (isDisabled) {
+        ctx.fillStyle = 'rgba(20, 20, 20, 0.5)'; ctx.strokeStyle = '#333';
+    } else {
+        ctx.fillStyle = isHover ? 'rgba(255, 255, 255, 0.15)' : 'rgba(30, 30, 30, 0.8)';
+        ctx.strokeStyle = isHover ? COLOR_TEXT : '#444';
+    }
+    ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.fillStyle = isDisabled ? '#555' : (isHover ? '#fff' : '#aaa');
+    ctx.font = "bold 32px 'Orbitron'";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, rect.x + rect.w/2, rect.y + rect.h/2 + 2);
+}
+
+function get_menu_buttons(offset_x) {
+    const base_x = WIDTH - BUTTON_MARGIN + offset_x - BUTTON_WIDTH;
+    const base_y = HEIGHT - BUTTON_MARGIN;
+    const lift = 50;
+    const play_rect = { x: base_x, y: base_y - (BUTTON_HEIGHT + BUTTON_GAP) * 2 - lift, w: BUTTON_WIDTH, h: BUTTON_HEIGHT };
+    const rank_rect = { x: base_x, y: base_y - (BUTTON_HEIGHT + BUTTON_GAP) - lift, w: BUTTON_WIDTH, h: BUTTON_HEIGHT };
+    const guide_rect = { x: base_x, y: base_y - lift, w: BUTTON_WIDTH, h: BUTTON_HEIGHT };
+    return { play_rect, rank_rect, guide_rect };
+}
+
+function draw_menu_ui(offset_x) {
+    ctx.save(); ctx.translate(offset_x, 0);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const centerX = WIDTH / 2; const centerY = HEIGHT / 3;
+
+    ctx.font = "900 100px 'Orbitron'";
+    const glow = 20 + Math.sin(global_time * 0.02) * 10;
+    ctx.shadowBlur = glow; ctx.shadowColor = 'rgba(255,255,255,0.3)';
+    ctx.fillStyle = '#fff'; ctx.fillText("BALLLLLLLL", centerX, centerY);
+    
+    ctx.shadowBlur = 0; ctx.font = "400 20px 'Orbitron'";
+    ctx.fillStyle = '#888'; ctx.letterSpacing = "5px";
+    ctx.fillText("✦ H Λ P P Y ✦", centerX, centerY + 80);
+
+    const { play_rect, rank_rect, guide_rect } = get_menu_buttons(0);
+    const mx = mousePos.x - offset_x; const my = mousePos.y;
+
+    draw_button(play_rect, "START", check_button_click(play_rect, mx, my));
+    draw_button(rank_rect, "RANK", check_button_click(rank_rect, mx, my));
+    draw_button(guide_rect, "GUIDE", check_button_click(guide_rect, mx, my));
+    ctx.restore();
+}
+
+function draw_mode_select_ui(offset_x) {
+    ctx.save();
+    ctx.translate(offset_x, 0);
+    
+    ctx.fillStyle = 'rgba(30, 30, 35, 0.3)';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.textAlign = "center"; ctx.fillStyle = "#fff";
+    ctx.font = "bold 40px 'Orbitron'"; ctx.fillText("SELECT MODE", WIDTH/2, 100);
+
+    const cardW = 220; const cardH = 320; const gap = 40;
+    const totalW = cardW * 3 + gap * 2;
+    const startX = (WIDTH - totalW) / 2; const startY = (HEIGHT - cardH) / 2;
+
+    const modes = [ { name: "CLASSIC", locked: false }, { name: "HARDCORE", locked: true }, { name: "COMING SOON...", locked: true } ];
+    modes.forEach((mode, i) => {
+        const x = startX + i * (cardW + gap); const y = startY;
+        const rect = { x, y, w: cardW, h: cardH };
+        const isHover = check_button_click(rect, mousePos.x - offset_x, mousePos.y);
+
+        ctx.beginPath(); ctx.roundRect(x, y, cardW, cardH, 10);
+        if (mode.locked) { ctx.fillStyle = '#111'; ctx.strokeStyle = '#333'; } 
+        else { ctx.fillStyle = isHover ? '#222' : '#151515'; ctx.strokeStyle = isHover ? COLOR_PLAYER : '#555'; }
+        ctx.fill(); ctx.lineWidth = mode.locked ? 1 : 3; ctx.stroke();
+
+        ctx.fillStyle = mode.locked ? '#444' : '#fff';
+        ctx.font = "bold 24px 'Orbitron'"; ctx.fillText(mode.name, x + cardW/2, y + cardH/2);
+        if (mode.locked) { ctx.font = "16px 'Orbitron'"; ctx.fillText("LOCKED", x + cardW/2, y + cardH/2 + 30); }
+    });
+
+    const back_rect = { x: WIDTH/2 - 100, y: HEIGHT - 100, w: 200, h: 50 };
+    draw_button(back_rect, "BACK", check_button_click(back_rect, mousePos.x - offset_x, mousePos.y));
+    
+    ctx.restore();
+}
+
+function draw_gameover_ui(offset_x) {
+    ctx.fillStyle = 'rgba(30, 30, 35, 0.3)'; 
+    ctx.fillRect(offset_x, 0, WIDTH, HEIGHT);
+    ctx.save(); ctx.translate(offset_x, 0);
+    ctx.textAlign = "center";
+    ctx.font = "900 80px 'Orbitron'"; ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 20; ctx.shadowColor = 'rgba(255,255,255,0.2)';
+    ctx.fillText("GAME OVER", WIDTH / 2, HEIGHT / 3 - 20);
+    ctx.shadowBlur = 0;
+    ctx.font = "400 30px 'Orbitron'"; ctx.fillStyle = '#aaa'; ctx.fillText(`SCORE: ${score}`, WIDTH / 2, HEIGHT / 2 - 10);
+    ctx.font = "700 34px 'Orbitron'"; ctx.fillStyle = COLOR_PLAYER; ctx.fillText(`BEST: ${best_score}`, WIDTH / 2, HEIGHT / 2 + 40);
+
+    const menu_btn_w = BUTTON_WIDTH; const menu_btn_h = BUTTON_HEIGHT;
+    const menu_btn_x = WIDTH / 2 - menu_btn_w / 2; const menu_btn_y = HEIGHT - 180;
+    const menu_rect = {x: menu_btn_x, y: menu_btn_y, w: menu_btn_w, h: menu_btn_h};
+    draw_button(menu_rect, "MENU", check_button_click(menu_rect, mousePos.x - offset_x, mousePos.y));
+    ctx.restore();
+}
+
+function check_button_click(rect, x, y) {
+    return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+// ==========================================
+// 5. 메인 루프
+// ==========================================
+
+let lastTime = 0;
+function loop(timestamp) {
+    const dt = timestamp - lastTime; lastTime = timestamp;
+    global_time += 1;
+    if (document.activeElement === nameInput) { requestAnimationFrame(loop); return; }
+    const time_factor = dt / (1000 / 60);
+
+    // --- BG SCROLL LOGIC ---
+    const scrollSpeed = 0.4;
+    let bg_factor = 1.0;
+    if (game_state === STATE_PLAY) bg_factor = current_time_scale;
+    else if (game_state === STATE_GUIDE) bg_factor = guide_slow_factor;
+    else if (game_state === STATE_EXPLODING) bg_factor = 0.2; 
+    
+    bg_scroll_x += scrollSpeed * bg_factor * time_factor;
+    bg_scroll_y += scrollSpeed * bg_factor * time_factor;
+
+    ctx.fillStyle = COLOR_BG_DARK; ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    // --- MOUSE INPUT ---
+    if (mouseClicked) {
+        const mx = mousePos.x; const my = mousePos.y;
+        if (game_state === STATE_MENU) {
+            const { play_rect, rank_rect, guide_rect } = get_menu_buttons(0);
+            if (check_button_click(play_rect, mx, my)) { game_state = STATE_SLIDE_TO_MODE; slide_timer = 0; }
+            else if (check_button_click(rank_rect, mx, my)) {
+                rankModal.classList.add('active'); 
+                if(window.fetchLeaderboardToDOM) window.fetchLeaderboardToDOM();
+            }
+            else if (check_button_click(guide_rect, mx, my)) { reset_guide(); game_state = STATE_SLIDE_TO_GUIDE; slide_timer = 0; }
+        }
+        else if (game_state === STATE_MODE_SELECT) {
+            const cardW = 220; const cardH = 320; const gap = 40;
+            const totalW = cardW * 3 + gap * 2;
+            const startX = (WIDTH - totalW) / 2; const startY = (HEIGHT - cardH) / 2;
+            const classicRect = { x: startX, y: startY, w: cardW, h: cardH };
+            const back_rect = { x: WIDTH/2 - 100, y: HEIGHT - 100, w: 200, h: 50 };
+            
+            if (check_button_click(classicRect, mx, my)) { 
+                reset_game(); 
+                game_state = STATE_SLIDE_TO_PLAY; 
+                slide_timer = 0; 
+            }
+            else if (check_button_click(back_rect, mx, my)) { game_state = STATE_SLIDE_FROM_MODE; slide_timer = 0; }
+        }
+        else if (game_state === STATE_GAMEOVER) {
+            if (!nameModal.classList.contains('active') && slide_timer >= SLIDE_DURATION) {
+                const menu_btn_w = BUTTON_WIDTH; const menu_btn_h = BUTTON_HEIGHT;
+                const menu_btn_x = WIDTH / 2 - menu_btn_w / 2; const menu_btn_y = HEIGHT - 180;
+                const menu_rect = {x: menu_btn_x, y: menu_btn_y, w: menu_btn_w, h: menu_btn_h};
+                if (check_button_click(menu_rect, mx, my)) {
+                    game_state = STATE_SLIDE_TO_MENU; slide_timer = 0;
+                    nameModal.classList.remove('active');
+                }
+            }
+        }
+        else if (game_state === STATE_GUIDE && guide_phase === 9) {
+             const exit_rect = { x: WIDTH/2 - 100, y: HEIGHT - 150, w: 200, h: 60 };
+             if (check_button_click(exit_rect, mx, my)) { game_state = STATE_SLIDE_FROM_GUIDE; slide_timer = 0; }
+        }
+        mouseClicked = false;
+    }
+
+    if (flash_timer > 0) flash_timer -= dt;
+    if (shake_timer > 0) shake_timer -= dt; else screen_offset = [0, 0];
+    if (slowdown_timer > 0) slowdown_timer -= dt;
+
+    // --- LOGIC ---
+    if (game_state === STATE_GUIDE) {
+        guide_timer += dt;
+        if (guide_phase === 0) { guide_slow_factor = 1.0; guide_overlay_alpha = 0; guide_text = ""; if (guide_timer > 500) { guide_phase = 1; guide_timer = 0; } }
+        else if (guide_phase === 1) { 
+             guide_slow_factor = Math.max(0.05, guide_slow_factor - 0.02); guide_overlay_alpha = Math.min(1.0, guide_overlay_alpha + 0.02); guide_text = "WASD to Move"; guide_text_alpha = Math.min(1.0, guide_text_alpha + 0.02); if (guide_overlay_alpha >= 1.0) guide_phase = 2; 
+        }
+        else if (guide_phase === 2) { if (keys['w']||keys['s']||keys['a']||keys['d']||keys['W']||keys['S']||keys['A']||keys['D']) { guide_phase = 3; guide_timer = 0; } }
+        else if (guide_phase === 3) { 
+             guide_slow_factor = Math.min(1.0, guide_slow_factor + 0.02); guide_overlay_alpha = Math.max(0, guide_overlay_alpha - 0.02); guide_text_alpha = Math.max(0, guide_text_alpha - 0.05); if (guide_overlay_alpha <= 0 && guide_timer > 800) { guide_phase = 4; guide_timer = 0; }
+        }
+        else if (guide_phase === 4) { 
+             guide_slow_factor = Math.max(0.05, guide_slow_factor - 0.02); guide_overlay_alpha = Math.min(1.0, guide_overlay_alpha + 0.02); guide_text = "Q to Dash"; guide_text_alpha = Math.min(1.0, guide_text_alpha + 0.02); if (guide_overlay_alpha >= 1.0) guide_phase = 5; 
+        }
+        else if (guide_phase === 5) { if (keys['q']||keys['Q']) { guide_phase = 6; guide_timer = 0; } }
+        else if (guide_phase === 6) { 
+             guide_slow_factor = Math.min(1.0, guide_slow_factor + 0.02); guide_overlay_alpha = Math.max(0, guide_overlay_alpha - 0.02); guide_text_alpha = Math.max(0, guide_text_alpha - 0.05); if (guide_overlay_alpha <= 0 && guide_timer > 800) { guide_phase = 7; guide_timer = 0; }
+        }
+        else if (guide_phase === 7) { 
+             if (!guide_enemy_spawned) { enemies.push({x: -50, y: HEIGHT/2, r: 25, vx: 3, vy: 0}); guide_enemy_spawned = true; }
+             guide_slow_factor = Math.max(0.05, guide_slow_factor - 0.02); guide_overlay_alpha = Math.min(1.0, guide_overlay_alpha + 0.02); guide_text = "Dodge Red Ball"; guide_text_alpha = Math.min(1.0, guide_text_alpha + 0.02); if (guide_overlay_alpha >= 1.0 && guide_timer > 1500) { guide_phase = 8; guide_timer = 0; }
+        }
+        else if (guide_phase === 8) { 
+             guide_slow_factor = Math.min(1.0, guide_slow_factor + 0.02); guide_overlay_alpha = Math.max(0, guide_overlay_alpha - 0.02); guide_text_alpha = Math.max(0, guide_text_alpha - 0.05); if (guide_timer > 4000) guide_phase = 9; 
+        }
+        else if (guide_phase === 9) { 
+             guide_slow_factor = 0.1; guide_overlay_alpha = 0.6; guide_text = "";
+             const exit_rect = { x: WIDTH/2 - 100, y: HEIGHT - 150, w: 200, h: 60 };
+             const isHover = check_button_click(exit_rect, mousePos.x, mousePos.y);
+             ctx.save(); draw_button(exit_rect, "MENU", isHover);
+             ctx.globalAlpha = Math.min(1.0, guide_timer / 1000);
+             ctx.fillStyle = "#fff"; ctx.font = "bold 40px 'Orbitron'"; ctx.textAlign = "center";
+             ctx.fillText("GOOD LUCK", WIDTH/2, HEIGHT/2); ctx.restore();
+        }
+        if (guide_phase === 7 || guide_phase === 8) {
+            enemies.forEach(e => {
+                const dist = Math.hypot(e.x - player_x, e.y - player_y);
+                if (dist < e.r + player_radius) {
+                    create_gameover_particles(player_x, player_y);
+                    player_x = WIDTH/2; player_y = HEIGHT/2; enemies = []; guide_enemy_spawned = false;
+                    guide_phase = 7; guide_timer = 0; guide_overlay_alpha = 0; guide_text_alpha = 0; flash_timer = 200; 
+                }
+            });
+        }
+        let move_x = 0; let move_y = 0;
+        if (keys['w']||keys['W']) move_y-=1; if (keys['s']||keys['S']) move_y+=1;
+        if (keys['a']||keys['A']) move_x-=1; if (keys['d']||keys['D']) move_x+=1;
+        if (move_x||move_y) { const len = Math.hypot(move_x,move_y); move_x/=len; move_y/=len; }
+        if ((keys['q']||keys['Q']) && dash_cooldown<=0 && (move_x||move_y)) {
+            dash_cooldown=DASH_COOLDOWN_TIME;
+            const sx=player_x; const sy=player_y;
+            player_x+=move_x*DASH_DISTANCE; player_y+=move_y*DASH_DISTANCE;
+            player_x=Math.max(player_radius,Math.min(WIDTH-player_radius,player_x));
+            player_y=Math.max(player_radius,Math.min(HEIGHT-player_radius,player_y));
+            create_dash_effects(sx,sy,player_x,player_y);
+        }
+        const cur_speed = player_speed * time_factor;
+        player_x+=move_x*cur_speed; player_y+=move_y*cur_speed;
+        if(dash_cooldown>0) dash_cooldown-=dt;
+        player_x=Math.max(player_radius,Math.min(WIDTH-player_radius,player_x));
+        player_y=Math.max(player_radius,Math.min(HEIGHT-player_radius,player_y));
+        enemies.forEach(e=>{ e.x+=e.vx*time_factor*guide_slow_factor; e.y+=e.vy*time_factor*guide_slow_factor; });
+        for(let i=particles.length-1;i>=0;i--){
+            let p=particles[i]; p.x+=p.vx*time_factor*guide_slow_factor; p.y+=p.vy*time_factor*guide_slow_factor;
+            p.life-=dt; if(p.life<=0) particles.splice(i,1);
+        }
+        draw_game_world(0,0,guide_slow_factor); draw_guide_overlay();
+    }
+    else if (game_state === STATE_PLAY) {
+        difficulty += difficulty_growth * dt;
+        const spawn_interval = Math.max(min_spawn_interval, spawn_base_interval / difficulty);
+        let move_x=0; let move_y=0;
+        if(keys['w']||keys['W']) move_y-=1; if(keys['s']||keys['S']) move_y+=1;
+        if(keys['a']||keys['A']) move_x-=1; if(keys['d']||keys['D']) move_x+=1;
+        if(move_x||move_y) { const len=Math.hypot(move_x,move_y); move_x/=len; move_y/=len; }
+        if((keys['q']||keys['Q']) && dash_cooldown<=0 && (move_x||move_y)) {
+            dash_cooldown=DASH_COOLDOWN_TIME;
+            const sx=player_x; const sy=player_y;
+            player_x+=move_x*DASH_DISTANCE; player_y+=move_y*DASH_DISTANCE;
+            player_x=Math.max(player_radius,Math.min(WIDTH-player_radius,player_x));
+            player_y=Math.max(player_radius,Math.min(HEIGHT-player_radius,player_y));
+            create_dash_effects(sx,sy,player_x,player_y);
+        }
+        const cur_speed=player_speed*time_factor;
+        player_x+=move_x*cur_speed; player_y+=move_y*cur_speed;
+        if(dash_cooldown>0) dash_cooldown-=dt;
+        player_x=Math.max(player_radius,Math.min(WIDTH-player_radius,player_x));
+        player_y=Math.max(player_radius,Math.min(HEIGHT-player_radius,player_y));
+        score_timer+=dt; if(score_timer>=100){ score+=1; score_timer=0; }
+        spawn_timer+=dt; if(spawn_timer>=spawn_interval){ enemies.push(create_enemy(player_x,player_y,difficulty)); spawn_timer=0; }
+        
+        let target_time_scale = (slowdown_timer > 0) ? ENEMY_SLOW_FACTOR : 1.0;
+        current_time_scale += (target_time_scale - current_time_scale) * 0.15 * time_factor;
+
+        for(let i=enemies.length-1;i>=0;i--){
+            let e=enemies[i]; e.x+=e.vx*time_factor*current_time_scale; e.y+=e.vy*time_factor*current_time_scale;
+            if(e.x<-100||e.x>WIDTH+100||e.y<-100||e.y>HEIGHT+100){ enemies.splice(i,1); continue; }
+            const dist=Math.hypot(e.x-player_x,e.y-player_y);
+            if(dist<e.r+player_radius){
+                lives-=1; enemies.splice(i,1); create_hit_particles(player_x,player_y); trigger_hit_effect();
+                if(lives<=0){ 
+                    best_score=Math.max(best_score,score); 
+                    game_state=STATE_EXPLODING; 
+                    create_gameover_particles(player_x, player_y);
+                }
+            }
+        }
+    }
+    else if (game_state === STATE_EXPLODING) {
+        const friction = 0.92;
+        enemies.forEach(e => {
+            e.vx *= friction; e.vy *= friction;
+            e.x += e.vx * time_factor; e.y += e.vy * time_factor;
+        });
+        for(let i=particles.length-1;i>=0;i--){
+            let p=particles[i]; p.x+=p.vx*time_factor*0.2; p.y+=p.vy*time_factor*0.2;
+            p.life-=dt; if(p.life<=0) particles.splice(i,1);
+        }
+        if (particles.length < 10) game_state = STATE_GAMEOVER;
+    }
+
+    if(game_state===STATE_PLAY) {
+        for(let i=particles.length-1;i>=0;i--){
+            let p=particles[i]; p.x+=p.vx*time_factor*current_time_scale; p.y+=p.vy*time_factor*current_time_scale;
+            p.life-=dt; if(p.life<=0) particles.splice(i,1);
+        }
+    }
+
+    // --- RENDER ---
+    if (game_state === STATE_INTRO) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        draw_grid(0,0); draw_menu_ui(-WIDTH*(1.0-ease_in_out_cubic(progress)));
+        if (progress >= 1.0) game_state = STATE_MENU;
+    }
+    else if (game_state === STATE_MENU) { draw_grid(0,0); draw_menu_ui(0); }
+    else if (game_state === STATE_SLIDE_TO_MODE) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        const offset = -WIDTH * ease_in_out_cubic(progress);
+        draw_grid(0,0); 
+        draw_menu_ui(offset); 
+        draw_mode_select_ui(WIDTH + offset);
+        if (progress >= 1.0) game_state = STATE_MODE_SELECT;
+    }
+    else if (game_state === STATE_SLIDE_FROM_MODE) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        const offset = -WIDTH * (1.0 - ease_in_out_cubic(progress));
+        draw_grid(0,0);
+        draw_menu_ui(offset);
+        draw_mode_select_ui(WIDTH + offset);
+        if (progress >= 1.0) game_state = STATE_MENU;
+    }
+    else if (game_state === STATE_MODE_SELECT) { 
+        draw_grid(0,0); draw_mode_select_ui(0); 
+    }
+    else if (game_state === STATE_PLAY || game_state === STATE_EXPLODING) { 
+        draw_game_world(screen_offset[0], screen_offset[1]); 
+    }
+    else if (game_state === STATE_GAMEOVER) {
+        draw_game_world(0,0);
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        draw_gameover_ui(WIDTH*(1.0-ease_in_out_cubic(progress)));
+        if (progress >= 1.0 && score > 0 && !isScoreSaved) {
+            nameModal.classList.add('active');
+            if(nameInput.value === "") nameInput.focus();
+        }
+    }
+    else if (game_state === STATE_SLIDE_TO_PLAY) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        const eased = ease_in_out_cubic(progress);
+        draw_grid(0,0);
+        draw_mode_select_ui(-WIDTH * eased);
+        draw_game_world(WIDTH * (1.0 - eased), 0);
+        if (progress >= 1.0) game_state = STATE_PLAY;
+    }
+    else if (game_state === STATE_SLIDE_TO_MENU) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        const offset = WIDTH * ease_in_out_cubic(progress);
+        draw_game_world(offset, 0); 
+        draw_gameover_ui(offset); 
+        draw_menu_ui(-WIDTH + offset); 
+        if (progress >= 1.0) { game_state = STATE_MENU; enemies=[]; particles=[]; nameModal.classList.remove('active'); }
+    }
+    else if (game_state === STATE_SLIDE_TO_GUIDE) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        draw_grid(0,0); draw_menu_ui(-WIDTH * ease_in_out_cubic(progress));
+        if (progress >= 1.0) { game_state = STATE_GUIDE; reset_guide(); }
+    }
+    else if (game_state === STATE_SLIDE_FROM_GUIDE) {
+        slide_timer += dt; const progress = Math.min(1.0, slide_timer / SLIDE_DURATION);
+        draw_grid(0,0); draw_menu_ui(-WIDTH * (1.0 - ease_in_out_cubic(progress)));
+        if (progress >= 1.0) game_state = STATE_MENU;
+    }
+
+    draw_status_indicator();
+
+    requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', e => { if (document.activeElement !== nameInput) keys[e.key] = true; });
+window.addEventListener('keyup', e => keys[e.key] = false);
+window.addEventListener('mousedown', e => { isMouseDown = true; mouseClicked = true; mousePos.x = e.clientX; mousePos.y = e.clientY; });
+window.addEventListener('mousemove', e => { mousePos.x = e.clientX; mousePos.y = e.clientY; });
+window.addEventListener('mouseup', () => isMouseDown = false);
+window.addEventListener('resize', () => { WIDTH = window.innerWidth; HEIGHT = window.innerHeight; canvas.width = WIDTH; canvas.height = HEIGHT; });
+
+closeRankBtn.addEventListener('click', () => { rankModal.classList.remove('active'); });
+
+submitBtn.addEventListener('click', async () => {
+    if (isScoreSaved) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "SAVING...";
+    const name = nameInput.value.trim().toUpperCase() || "ANON";
+    // saveScore 함수 호출 (내부에서 온라인/오프라인 분기 처리)
+    await window.saveScore(name, score);
+    isScoreSaved = true;
+    submitBtn.textContent = "SAVED!";
+    setTimeout(() => { nameModal.classList.remove('active'); }, 600);
+});
+
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
